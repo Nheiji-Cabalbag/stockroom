@@ -1,0 +1,92 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#16302b"><title>Stockroom</title>
+<style>
+:root{--bg:#eef2f1;--ink:#16302b;--mut:#5d716c;--card:#fff;--line:#d3dedb;--acc:#16302b;--on:#fff;--bad:#b3261e;--badbg:#fbe9e7;--ok:#2e7d32}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1a18;--ink:#e6efed;--mut:#93a8a3;--card:#172623;--line:#2a3d39;--acc:#7fd1bd;--on:#0f1a18;--bad:#ff8a80;--badbg:#3a1f1c;--ok:#81c784}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding-bottom:72px}
+h1,h2{font-family:Georgia,"Times New Roman",serif;margin:0}h2{font-size:1.35rem;margin:0 0 12px}
+header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:var(--acc);color:var(--on)}
+header h1{font-size:1.25rem;flex:1}header select,header button{font:inherit;padding:6px 10px;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit}
+main{max-width:860px;margin:0 auto;padding:16px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line)}
+nav button{flex:1;padding:14px 4px;font:inherit;border:0;background:none;color:var(--mut);min-height:52px}nav button[aria-current=true]{color:var(--ink);font-weight:700;box-shadow:inset 0 3px var(--acc)}
+@media(min-width:760px){body{padding:0}nav{position:static;justify-content:center;border:0;border-bottom:1px solid var(--line)}nav button{flex:0 0 130px}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+label{display:block;font-weight:600;margin:12px 0 4px}input,select{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+button.p{width:100%;margin-top:16px;padding:14px;font:inherit;font-weight:700;border:0;border-radius:8px;background:var(--acc);color:var(--on)}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}
+.qty{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}.mut{color:var(--mut);font-size:.9rem}
+.low{background:var(--badbg);color:var(--bad);border-radius:99px;padding:1px 9px;font-size:.8rem;font-weight:700;margin-left:6px}
+.seg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.seg label{margin:0;border:1px solid var(--line);border-radius:8px;padding:12px;text-align:center;font-weight:600}.seg input{display:none}.seg label:has(input:checked){background:var(--acc);color:var(--on)}
+.grid{display:grid;gap:12px}@media(min-width:600px){.grid{grid-template-columns:repeat(3,1fr)}}
+.big{font-family:Georgia,serif;font-size:1.6rem}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px 4px;border-bottom:1px solid var(--line);font-size:.92rem}
+#toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:90vw}
+.err{color:var(--bad);font-weight:600}
+</style></head><body><div id="app"></div><div id="toast" role="status"></div>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const S={tok:localStorage.tok||'',me:null,branches:[],branch:null,items:[],stock:[],tab:'stock'};
+let Q=JSON.parse(localStorage.q||'[]');const saveQ=()=>localStorage.q=JSON.stringify(Q);
+const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(16).slice(2);
+const TYPE={in:'Delivery',usage:'Usage',waste:'Waste',spoilage:'Spoilage'};
+function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3200)}
+async function api(p,body){
+  const r=await fetch('/api/'+p,{method:body?'POST':'GET',headers:{'content-type':'application/json',authorization:'Bearer '+S.tok},body:body&&JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401&&p!=='login'){logout();throw Error('Session expired. Sign in again.')}
+  if(!r.ok)throw Error(j.error||'Request failed');return j}
+function logout(){localStorage.removeItem('tok');S.tok='';S.me=null;loginView()}
+async function flush(){
+  while(Q.length){try{await api('move',Q[0])}catch(e){if(e instanceof TypeError)return;toast('Dropped a saved entry: '+e.message)}Q.shift();saveQ()}
+  const b=$('#pend');if(b)b.hidden=true;if(S.me)draw()}
+addEventListener('online',flush);
+
+function loginView(msg=''){
+  $('#app').innerHTML=`<main style="max-width:380px;margin-top:8vh"><h1 style="font-size:2rem">Stockroom</h1><p class="mut">Sign in to manage stock for your branch.</p>
+  <form id="f" class="card"><label for="u">Username</label><input id="u" autocomplete="username" autocapitalize="none" required>
+  <label for="p">Password</label><input id="p" type="password" autocomplete="current-password" required><p class="err" id="e">${esc(msg)}</p><button class="p">Sign in</button></form>
+  <p class="mut">Demo: admin / admin123, manager1 / manager123, staff1 / staff123</p></main>`;
+  $('#f').onsubmit=async ev=>{ev.preventDefault();try{const r=await api('login',{username:$('#u').value,password:$('#p').value});S.tok=localStorage.tok=r.token;await init()}catch(e){$('#e').textContent=e.message}}}
+async function init(){
+  const r=await api('me');S.me=r.user;S.branches=r.branches;S.branch=S.branches[0]?.id;S.items=await api('items');
+  S.tab=S.me.role==='staff'?'stock':'dash';draw();flush()}
+const tabs=()=>[['dash','Dashboard',['admin','manager']],['stock','Stock',0],['rec','Record',0],['hist','History',['admin','manager']],['items','Items',['admin']]].filter(t=>!t[2]||t[2].includes(S.me.role));
+function draw(){
+  $('#app').innerHTML=`<header><h1>Stockroom</h1>${S.me.role==='admin'?`<select id="br" aria-label="Branch">${S.branches.map(b=>`<option value="${b.id}" ${b.id==S.branch?'selected':''}>${esc(b.name)}</option>`).join('')}</select>`:`<span>${esc(S.branches[0]?.name)}</span>`}
+  <span id="pend" ${Q.length?'':'hidden'}>${Q.length} waiting to sync</span><button id="out">Sign out</button></header>
+  <nav>${tabs().map(t=>`<button data-t="${t[0]}" ${t[0]===S.tab?'aria-current="true"':''}>${t[1]}</button>`).join('')}</nav><main id="main"></main>`;
+  $('#out').onclick=logout;if($('#br'))$('#br').onchange=e=>{S.branch=+e.target.value;draw()};
+  document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{S.tab=b.dataset.t;draw()});
+  ({dash:dashView,stock:stockView,rec:recView,hist:histView,items:itemsView})[S.tab]().catch(e=>$('#main').innerHTML=`<p class="err">${esc(e.message)}</p>`)}
+const bq=()=>'branch='+S.branch;
+async function dashView(){
+  const d=await api('dashboard');
+  $('#main').innerHTML=`<h2>Dashboard</h2><div class="grid">${d.branches.map(b=>`<div class="card"><b>${esc(b.name)}</b><div class="big">₱${b.value.toLocaleString()}</div><span class="mut">stock value</span><div>${b.low?`<span class="low">${b.low} low</span>`:'<span class="mut">Nothing low</span>'}</div></div>`).join('')}</div>
+  <div class="card"><h2>Low stock</h2>${d.low.length?d.low.map(l=>`<div class="row"><span>${esc(l.item)}<div class="mut">${esc(l.branch)}</div></span><span class="qty">${l.qty} / ${l.reorder} ${esc(l.unit)}</span></div>`).join(''):'<p class="mut">Every item is above its reorder level.</p>'}</div>
+  <div class="card"><h2>Recent activity</h2>${d.recent.map(m=>`<div class="row"><span>${esc(m.item)}<div class="mut">${esc(m.branch)} · ${esc(m.by)} · ${esc(m.at)}</div></span><span class="qty">${m.delta>0?'+':''}${m.delta} ${esc(m.unit)}</span></div>`).join('')||'<p class="mut">No activity yet.</p>'}</div>`}
+async function stockView(){
+  S.stock=await api('stock?'+bq());
+  $('#main').innerHTML=`<h2>Stock</h2><input id="s" type="search" placeholder="Search items" aria-label="Search items"><div class="card" id="list"></div>`;
+  const go=()=>{const t=$('#s').value.toLowerCase();$('#list').innerHTML=S.stock.filter(i=>i.name.toLowerCase().includes(t)).map(i=>`<div class="row"><span>${esc(i.name)}${i.qty<=i.reorder?'<span class="low">Low</span>':''}<div class="mut">${esc(i.category)} · reorder at ${i.reorder}</div></span><span class="qty">${i.qty} ${esc(i.unit)}</span></div>`).join('')||'<p class="mut">No items match.</p>'};
+  $('#s').oninput=go;go()}
+async function recView(){
+  $('#main').innerHTML=`<h2>Record stock</h2><form id="f" class="card"><div class="seg" role="radiogroup" aria-label="Type">${Object.entries(TYPE).map(([k,v],n)=>`<label><input type="radio" name="t" value="${k}" ${n?'':'checked'}>${v}</label>`).join('')}</div>
+  <label for="i">Item</label><select id="i">${S.items.map(i=>`<option value="${i.id}">${esc(i.name)} (${esc(i.unit)})</option>`).join('')}</select>
+  <label for="q">Quantity</label><input id="q" inputmode="decimal" required><label for="r">Reason (required for waste and spoilage)</label><input id="r" placeholder="Optional for delivery and usage">
+  <p class="err" id="e"></p><button class="p">Save entry</button></form>`;
+  $('#f').onsubmit=async ev=>{ev.preventDefault();$('#e').textContent='';
+    const body={uuid:uid(),branch_id:S.branch,item_id:+$('#i').value,type:document.querySelector('[name=t]:checked').value,qty:$('#q').value,reason:$('#r').value};
+    try{await api('move',body);toast('Saved');$('#q').value=$('#r').value=''}
+    catch(e){if(e instanceof TypeError){Q.push(body);saveQ();toast('Offline. Saved on this device and will sync.');draw()}else $('#e').textContent=e.message}}}
+async function histView(){
+  const m=await api('movements?branch='+(S.me.role==='admin'?S.branch:''));
+  $('#main').innerHTML=`<h2>History</h2><button class="p" id="x" style="margin:0 0 12px">Download CSV</button><div class="card" style="overflow-x:auto"><table><tr><th>When<th>Item<th>Change<th>Type<th>By</tr>${m.map(r=>`<tr><td>${esc(r.at)}<td>${esc(r.item)}<br><span class="mut">${esc(r.reason)}</span><td class="qty">${r.delta>0?'+':''}${r.delta} ${esc(r.unit)}<td>${TYPE[r.type]||esc(r.type)}<td>${esc(r.by)}</tr>`).join('')}</table></div>`;
+  $('#x').onclick=async()=>{const r=await fetch('/api/export.csv?branch=all',{headers:{authorization:'Bearer '+S.tok}});const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download='stock-history.csv';a.click()}}
+async function itemsView(){
+  S.items=await api('items');
+  $('#main').innerHTML=`<h2>Items</h2><form id="f" class="card"><b>Add an item</b><label for="n">Name</label><input id="n" required><label for="c">Category</label><input id="c">
+  <label for="u">Unit (kg, L, pcs, box)</label><input id="u" required><label for="s">Supplier</label><input id="s"><label for="k">Cost per unit</label><input id="k" inputmode="decimal" required><label for="o">Reorder level</label><input id="o" inputmode="decimal" required>
+  <p class="err" id="e"></p><button class="p">Add item</button></form><div class="card">${S.items.map(i=>`<div class="row"><span>${esc(i.name)}<div class="mut">${esc(i.category)} · ${esc(i.supplier)}</div></span><span class="qty">₱${i.cost}/${esc(i.unit)}</span></div>`).join('')}</div>`;
+  $('#f').onsubmit=async ev=>{ev.preventDefault();try{await api('items',{name:$('#n').value,category:$('#c').value,unit:$('#u').value,supplier:$('#s').value,cost:$('#k').value,reorder:$('#o').value});toast('Item added');itemsView()}catch(e){$('#e').textContent=e.message}}}
+S.tok?init().catch(()=>loginView()):loginView();
+</script></body></html>
